@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>02-目标02-内存与存储管理笔记</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<style>
+  body { font-family: "Microsoft YaHei", "Segoe UI", sans-serif; max-width: 960px;
+         margin: 0 auto; padding: 24px 32px; line-height: 1.75; color: #24292f;
+         background: #ffffff; }
+  h1 { border-bottom: 3px solid #1a73e8; padding-bottom: 8px; color: #1a3a6b; }
+  h2 { border-left: 5px solid #1a73e8; padding-left: 10px; margin-top: 36px; color: #1a3a6b; }
+  h3 { color: #2c5aa0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+  th, td { border: 1px solid #d0d7de; padding: 8px 12px; text-align: left; }
+  th { background: #f0f6ff; }
+  tr:nth-child(even) { background: #fafbfc; }
+  code { background: #f0f1f3; border-radius: 4px; padding: 2px 6px;
+          font-family: Consolas, monospace; font-size: 0.92em; }
+  pre { background: #f6f8fa; border-radius: 8px; padding: 14px 16px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  blockquote { border-left: 4px solid #1a73e8; background: #f0f6ff;
+                margin: 12px 0; padding: 8px 16px; color: #333; }
+  pre.mermaid { background: #ffffff; border: 1px solid #e1e4e8; text-align: center; }
+  .mermaid svg { max-width: 100%; }
+  .back { margin-bottom: 20px; }
+  .back a { color: #1a73e8; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="back"><a href="index.html">← 返回目录</a></div>
+<h1>目标02 学习笔记：OS Kernel 内存与存储管理</h1>
+<blockquote>
+<p>对应教材：汤子瀛《计算机操作系统》第四章 存储器管理、第五章 虚拟存储器、第六章 输入输出系统<br />
+日期：2026/10 ｜ 数据科学2401 ｜ 杨显坤 202423030104</p>
+</blockquote>
+<hr />
+<h2>一、本章思维导图</h2>
+<pre class="mermaid">
+mindmap
+  root((内存与存储管理))
+    存储器层次
+      寄存器 高速缓存 主存 磁盘缓存
+      辅存 磁盘
+    连续分配方式
+      单一连续分配
+      固定分区分配
+      动态分区分配
+        首次适应 最佳适应 最坏适应
+      动态重定位分区-紧凑
+    对换 Swapping
+      以进程为单位换入换出
+    分页存储管理
+      页面 物理块 页表
+      地址变换机构
+      快表 TLB
+      两级/多级页表
+    分段存储管理
+      按逻辑单位分段
+      分段 vs 分页
+    虚拟存储器
+      局部性原理
+      请求分页 请求分段
+      页面置换算法
+        OPT FIFO LRU Clock
+      Belady 异常
+      抖动与工作集
+    输入输出系统
+      I/O软件层次结构
+      中断处理
+      设备驱动程序
+      缓冲区管理
+      设备分配与SPOOLing
+</pre>
+<hr />
+<h2>二、分页系统的地址变换（重点流程图）</h2>
+<pre class="mermaid">
+flowchart TD
+    A[逻辑地址 A] --> B["页号 P = A ÷ 页面大小 L<br>页内偏移 W = A mod L"]
+    B --> C{查快表 TLB}
+    C -->|命中| H[直接得到物理块号 b]
+    C -->|未命中| D[访问内存中的页表]
+    D --> E{页表项状态位}
+    E -->|在内存| F[得到块号 b, 同时写入快表]
+    E -->|不在内存| G[缺页中断<br>调入页面, 必要时页面置换]
+    F --> G2[计算物理地址<br>物理地址 = b × L + W]
+    H --> G2
+    G --> G2
+</pre>
+<p><strong>易错点：</strong><br />
+1. 一次<strong>有效访问</strong>在无快表时需要 <strong>2 次访存</strong>（查页表 1 次 + 取数据 1 次）；有快表且命中只需 1 次；<br />
+2. 缺页中断属于<strong>内中断</strong>，且在指令执行期间产生并处理（区别于一般外中断）；<br />
+3. 页面大小和物理块大小<strong>相等</strong>。</p>
+<h3>地址变换计算例题套路</h3>
+<blockquote>
+<p>页面大小 1KB，逻辑地址 2500 → P = 2500 ÷ 1024 = <strong>2</strong>，W = 2500 mod 1024 = <strong>452</strong><br />
+若页表知 2 号页对应块号 8 → 物理地址 = 8 × 1024 + 452 = <strong>8644</strong></p>
+</blockquote>
+<hr />
+<h2>三、页面置换算法对比</h2>
+<table>
+<thead>
+<tr>
+<th>算法</th>
+<th>思想</th>
+<th>优点</th>
+<th>缺点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OPT 最佳</td>
+<td>淘汰以后最长时间不用的页</td>
+<td>缺页率最低（理论）</td>
+<td>无法实现（要预知未来），作评价基准</td>
+</tr>
+<tr>
+<td>FIFO 先进先出</td>
+<td>淘汰最先进入的页</td>
+<td>实现简单</td>
+<td>有 <strong>Belady 异常</strong>（页框越多缺页反而可能越多）</td>
+</tr>
+<tr>
+<td>LRU 最近最久未使用</td>
+<td>淘汰最长时间没被访问的页</td>
+<td>性能接近 OPT</td>
+<td>硬件开销大（要记访问时间）</td>
+</tr>
+<tr>
+<td>Clock/NRU</td>
+<td>循环扫描，访问位为 0 则淘汰</td>
+<td>开销小</td>
+<td>只是 LRU 的近似</td>
+</tr>
+</tbody>
+</table>
+<h3>LRU 核心代码（理解思想用）</h3>
+<pre><code class="language-python">def lru_missing_count(pages, capacity):
+    mem, misses = [], 0
+    for p in pages:
+        if p in mem:
+            mem.remove(p)      # 刚访问过，移到&quot;最新&quot;位置
+        else:
+            misses += 1        # 缺页
+            if len(mem) == capacity:
+                mem.pop(0)     # 淘汰最久未使用的
+        mem.append(p)
+    return misses
+
+# 验证 Belady 异常用 FIFO 而不是 LRU
+def fifo_missing_count(pages, capacity):
+    mem, misses = [], 0
+    for p in pages:
+        if p not in mem:
+            misses += 1
+            if len(mem) == capacity:
+                mem.pop(0)
+            mem.append(p)
+    return misses
+</code></pre>
+<p><strong>易错点：</strong><br />
+1. LRU 是"<strong>最近</strong>没被访问"，不是"访问次数最少"（那是 LFU）；<br />
+2. 增加分配页框数，FIFO 的缺页次数<strong>可能不降反升</strong>——Belady 异常；LRU 和 OPT 无此异常；<br />
+3. 置换前先查页表确认真的不在内存，别上来就置换。</p>
+<hr />
+<h2>四、分段 vs 分页（必考对比）</h2>
+<table>
+<thead>
+<tr>
+<th>对比项</th>
+<th>分页</th>
+<th>分段</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>单位依据</td>
+<td>物理划分，固定大小</td>
+<td>逻辑划分（代码段/数据段），不定长</td>
+</tr>
+<tr>
+<td>目的</td>
+<td>提高内存利用率</td>
+<td>满足用户模块化、共享与保护需求</td>
+</tr>
+<tr>
+<td>地址空间</td>
+<td>一维（一个地址数字）</td>
+<td>二维（段号 + 段内偏移）</td>
+</tr>
+<tr>
+<td>碎片</td>
+<td>有内部碎片，无外部碎片</td>
+<td>有外部碎片，无内部碎片</td>
+</tr>
+<tr>
+<td>共享</td>
+<td>难</td>
+<td>容易（对可重入代码共享一段）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>五、虚拟存储器三大特征 + 局部性原理</h2>
+<ol>
+<li><strong>多次性</strong>：作业分多次调入内存</li>
+<li><strong>对换性</strong>：可换入换出</li>
+<li><strong>虚拟性</strong>：逻辑容量 = min(内外存之和, 地址空间)</li>
+</ol>
+<p>理论基础：<strong>局部性原理</strong>（时间局部性 + 空间局部性）。</p>
+<p><strong>抖动（颠簸）</strong>：页面频繁换入换出，CPU 利用率骤降 → 用<strong>工作集</strong>模型控制：给进程分配 ≥ 工作集的页框数。</p>
+<hr />
+<h2>六、I/O 系统：软件层次（从上到下背）</h2>
+<pre class="mermaid">
+flowchart TD
+    A[用户层 I/O 软件<br>库函数如 printf] --> B[设备独立性软件<br>系统调用/映射/保护/缓冲]
+    B --> C[设备驱动程序<br>读写寄存器, 具体设备命令]
+    C --> D[中断处理程序<br>保存现场→处理→恢复现场]
+    D --> E[硬件]
+</pre>
+<p><strong>每层任务一句话：</strong> 用户层管"好用"，设备独立性软件管"统一接口+缓冲+分配"，驱动管"懂设备"，中断管"善后"。</p>
+<h3>中断处理流程</h3>
+<pre class="mermaid">
+flowchart LR
+    A[设备发中断请求] --> B[中断允许?]
+    B -->|开中断| C[保护现场]
+    C --> D[执行中断服务程序<br>处理I/O]
+    D --> E[恢复现场]
+    E --> F[返回被中断进程]
+</pre>
+<h3>缓冲区为什么能提速？（易考简答）</h3>
+<ul>
+<li>缓和 CPU 与 I/O 设备速度不匹配的矛盾；</li>
+<li>减少对 CPU 的中断频率，放宽中断响应时间限制；</li>
+<li>提高 CPU 与 I/O 设备的<strong>并行性</strong>。</li>
+<li>单缓冲：处理一块时间 ≈ max(C, T) + M；双缓冲：≈ max(C + M, T)。（C=处理时间，T=输入时间，M=传送时间）</li>
+</ul>
+<hr />
+<h2>七、我的疑问与补充</h2>
+<ul>
+<li>[ ] Clock 算法里访问位和修改位组成 4 种情况，优先淘汰哪类？（(0,0)→(0,1)）</li>
+<li>[ ] SPOOLing 如何把独占设备改造成共享设备？（用磁盘上的输入/输出井模拟）</li>
+</ul>
+</body>
+</html>
+<script>
+document.querySelectorAll("pre code.language-mermaid").forEach(function(el){
+  var pre = el.parentNode;
+  var div = document.createElement("pre");
+  div.className = "mermaid";
+  div.textContent = el.textContent;
+  pre.replaceWith(div);
+});
+mermaid.initialize({ startOnLoad: true, theme: "default" });
+</script>

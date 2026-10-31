@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>03-目标03-文件管理与OS接口笔记</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<style>
+  body { font-family: "Microsoft YaHei", "Segoe UI", sans-serif; max-width: 960px;
+         margin: 0 auto; padding: 24px 32px; line-height: 1.75; color: #24292f;
+         background: #ffffff; }
+  h1 { border-bottom: 3px solid #1a73e8; padding-bottom: 8px; color: #1a3a6b; }
+  h2 { border-left: 5px solid #1a73e8; padding-left: 10px; margin-top: 36px; color: #1a3a6b; }
+  h3 { color: #2c5aa0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+  th, td { border: 1px solid #d0d7de; padding: 8px 12px; text-align: left; }
+  th { background: #f0f6ff; }
+  tr:nth-child(even) { background: #fafbfc; }
+  code { background: #f0f1f3; border-radius: 4px; padding: 2px 6px;
+          font-family: Consolas, monospace; font-size: 0.92em; }
+  pre { background: #f6f8fa; border-radius: 8px; padding: 14px 16px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  blockquote { border-left: 4px solid #1a73e8; background: #f0f6ff;
+                margin: 12px 0; padding: 8px 16px; color: #333; }
+  pre.mermaid { background: #ffffff; border: 1px solid #e1e4e8; text-align: center; }
+  .mermaid svg { max-width: 100%; }
+  .back { margin-bottom: 20px; }
+  .back a { color: #1a73e8; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="back"><a href="index.html">← 返回目录</a></div>
+<h1>目标03 学习笔记：OS Kernel 文件系统管理与操作系统接口</h1>
+<blockquote>
+<p>对应教材：汤子瀛《计算机操作系统》第七章 文件管理、第九章 操作系统接口<br />
+日期：2026/11 ｜ 数据科学2401 ｜ 杨显坤 202423030104</p>
+</blockquote>
+<hr />
+<h2>一、本章思维导图</h2>
+<pre class="mermaid">
+mindmap
+  root((文件系统与OS接口))
+    文件和文件系统
+      文件 = 记录的集合
+      文件系统功能:管理/分配/保护
+      文件逻辑结构
+        顺序文件 索引文件 索引顺序文件
+    文件目录
+      FCB 文件控制块
+      索引节点 inode 瘦身
+      目录结构
+        单级 两级 树形 有向无环图DAG
+    文件共享
+      硬链接 基于索引节点
+      软链接 基于路径SymLink
+    文件保护
+      访问权限 rwx
+      口令 加密 访问控制ACL
+    外存组织方式
+      连续分配
+      链接分配 隐式/显式FAT
+      索引分配
+      多级索引 混合索引 Unix
+    磁盘管理
+      外存空闲空间管理
+        位示图 空闲链表 成组链接法
+      提高磁盘I/O:磁盘高速缓存
+      数据一致性
+    操作系统接口
+      命令接口
+        联机命令接口-交互式
+        脱机命令接口-批处理
+      程序接口 = 系统调用
+      系统调用的概念/类型/实现
+</pre>
+<hr />
+<h2>二、外存组织方式对比（核心考点）</h2>
+<table>
+<thead>
+<tr>
+<th>方式</th>
+<th>思想</th>
+<th>优点</th>
+<th>缺点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>连续分配</td>
+<td>文件占连续的磁盘块</td>
+<td>支持随机访问，速度快</td>
+<td>有外部碎片，文件难扩展</td>
+</tr>
+<tr>
+<td>隐式链接</td>
+<td>每块含指向下一块的指针</td>
+<td>无外部碎片，易扩展</td>
+<td>只能顺序访问，指针占空间</td>
+</tr>
+<tr>
+<td>显式链接 <strong>FAT</strong></td>
+<td>指针集中存到一张 FAT 表</td>
+<td>查表在内存，支持随机访问</td>
+<td>FAT 表占内存，掉电易失</td>
+</tr>
+<tr>
+<td>索引分配</td>
+<td>每个文件一张索引表</td>
+<td>支持随机+直接访问</td>
+<td>小文件也需一块存索引表</td>
+</tr>
+<tr>
+<td>混合索引（UNIX）</td>
+<td>直接地址 + 一/二/三级间接地址</td>
+<td>兼顾大小文件</td>
+<td>结构复杂</td>
+</tr>
+</tbody>
+</table>
+<p><strong>计算题套路（UNIX 混合索引）：</strong></p>
+<blockquote>
+<p>设块大小 4KB，每块可存 1K 个地址（4B/个）：<br />
+直接地址 10 块 → 最大 40KB<br />
++ 一级间接 +1K 块，+ 二级间接 +1M 块，+ 三级间接 +1G 块<br />
+最大文件 = (10 + 1K + 1M + 1G) × 4KB</p>
+</blockquote>
+<h3>打开文件的过程（流程图）</h3>
+<pre class="mermaid">
+flowchart TD
+    A[用户进程 open 调用] --> B[系统调用陷入内核]
+    B --> C[沿目录检索文件名]
+    C --> D[把该文件的 FCB/索引节点<br>复制到内存打开文件表]
+    D --> E[返回文件描述符 fd]
+    E --> F[后续 read/write 只用 fd<br>不必再检索目录]
+</pre>
+<p><strong>易错点：</strong> "打开文件"是把 <strong>FCB（索引结点）</strong> 调入内存，而不是把文件内容读进内存；<code>read</code> 时才按索引表去磁盘读数据块。</p>
+<hr />
+<h2>三、文件共享：硬链接 vs 软链接（必考）</h2>
+<pre class="mermaid">
+flowchart LR
+    subgraph 硬链接
+    A1[共享文件] <--count计数--> B1[多个目录项<br>指向同一inode]
+    end
+    subgraph 软链接
+    A2[Link类型的文件<br>存放路径名] --> B2[再查目录找到真身]
+    end
+</pre>
+<table>
+<thead>
+<tr>
+<th>对比项</th>
+<th>硬链接</th>
+<th>软链接（符号链接）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>本质</td>
+<td>多个目录项指向同一 inode</td>
+<td>一个新文件，内容是路径</td>
+</tr>
+<tr>
+<td>文件删除</td>
+<td>计数 -1，=0 才真正删除</td>
+<td>原文件删除后链接失效（悬空）</td>
+</tr>
+<tr>
+<td>能否跨文件系统</td>
+<td>不能</td>
+<td>能</td>
+</tr>
+<tr>
+<td>能否给目录建链</td>
+<td>不能（防环）</td>
+<td>能</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>四、外存空闲空间管理</h2>
+<table>
+<thead>
+<tr>
+<th>方法</th>
+<th>思想</th>
+<th>代表</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>空闲表</td>
+<td>记录 (起始块号, 空闲块数)</td>
+<td>连续分配场合</td>
+</tr>
+<tr>
+<td>空闲链表</td>
+<td>空闲盘块/盘区串成链</td>
+<td>简单但效率低</td>
+</tr>
+<tr>
+<td><strong>位示图</strong></td>
+<td>每个盘块对应一个 0/1 位</td>
+<td>最常用，考试爱考</td>
+</tr>
+</tbody>
+</table>
+<p><strong>位示图计算题套路：</strong></p>
+<blockquote>
+<p>字长 32 位，盘块号、字号从 0 开始：<br />
+盘块 b 对应 字号 = b ÷ 32（取整），位号 = b mod 32<br />
+反过来：盘块号 = 字号 × 32 + 位号</p>
+</blockquote>
+<p>UNIX 采用 <strong>成组链接法</strong>：空闲盘块号分组管理，第一组的信息放在超级块的空闲盘块号栈中。</p>
+<hr />
+<h2>五、操作系统接口</h2>
+<pre class="mermaid">
+flowchart TD
+    A[操作系统接口] --> B[命令接口<br>给用户用]
+    A --> C[程序接口<br>给程序员用 = 系统调用]
+    A --> D[图形界面 GUI<br>现代系统的补充]
+    B --> B1[联机命令接口<br>交互式-一敲命令一个响应]
+    B --> B2[脱机命令接口<br>批处理-作业控制语言JCL]
+</pre>
+<h3>系统调用（程序接口的唯一入口）</h3>
+<p>系统调用的执行过程：</p>
+<pre class="mermaid">
+flowchart LR
+    A[应用程序<br>传系统调用号+参数] -->|陷入 trap 指令| B[从用户态转核心态]
+    B --> C[内核查系统调用入口表<br>转到相应处理子程序]
+    C --> D[执行内核服务]
+    D --> E[返回结果, 恢复用户态]
+</pre>
+<p><strong>易错点：</strong><br />
+1. 系统调用运行在<strong>核心态</strong>，普通库函数（如 <code>printf</code> 内部的格式化）运行在<strong>用户态</strong>——<code>printf</code> 是"库函数 + 最终触发 write 系统调用"的组合；<br />
+2. 陷入（trap）≠ 中断：trap 是<strong>主动</strong>的，由程序内部产生；中断是被动的；<br />
+3. 用户态 → 核心态<strong>唯一</strong>的合法途径就是中断/异常（包括系统调用）。</p>
+<h3>一个系统调用的直观例子（Linux C）</h3>
+<pre><code class="language-c">#include &lt;unistd.h&gt;
+#include &lt;fcntl.h&gt;
+
+int main() {
+    // open/read/write/close 都是系统调用
+    int fd = open(&quot;test.txt&quot;, O_RDONLY);   // ① 打开文件, 得到描述符
+    char buf[128];
+    int n = read(fd, buf, sizeof(buf));    // ② 从文件读数据(核心态)
+    write(STDOUT_FILENO, buf, n);          // ③ 写到标准输出
+    close(fd);                             // ④ 关闭文件, 释放打开文件表项
+    return 0;
+}
+</code></pre>
+<hr />
+<h2>六、我的疑问与补充</h2>
+<ul>
+<li>[ ] 为什么树形目录检索要"从根目录逐级"或"从当前目录"？（相对路径 vs 绝对路径）</li>
+<li>[ ] 成组链接法中分配和回收空闲块的具体操作顺序？</li>
+</ul>
+</body>
+</html>
+<script>
+document.querySelectorAll("pre code.language-mermaid").forEach(function(el){
+  var pre = el.parentNode;
+  var div = document.createElement("pre");
+  div.className = "mermaid";
+  div.textContent = el.textContent;
+  pre.replaceWith(div);
+});
+mermaid.initialize({ startOnLoad: true, theme: "default" });
+</script>
